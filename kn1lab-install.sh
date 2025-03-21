@@ -238,7 +238,7 @@ create_qemu_vm() {
 
     if [ $ARCH == "x86_64" ]; then
         # Run the VM using QEMU with x86_64 architecture
-        qemu-system-aarch64 \
+        qemu-system-x86_64 \
             -m "$MEMORY_SIZE"M \
             -accel hvf \
             -cpu host \
