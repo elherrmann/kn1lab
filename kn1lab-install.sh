@@ -12,7 +12,7 @@ Usage:\n
 Options:\n
 \t-s|--ssh-pub-key [PATH]\t\tset path to ssh PUBLIC key\n
 \t-v|--set-hypervisor [STRING]\tset hypervisor. Default is auto\n
-\t\t\t\t\tsupported options: qemu, virtualbox, auto\n
+\t\t\t\t\tsupported options: QEMU, VirtualBox, auto\n
 \t-h|--help\t\t\tdisplay this help and exit\n"
 
 # Handling Args
@@ -25,8 +25,8 @@ while [[ $# -gt 0 ]]; do
       ;;
     -v|--set-hypervisor)
       HYPERVISOR="$2"
-      if ! [[ "$HYPERVISOR" =~ ^(qemu|virtualbox)$ ]]; then
-        echo -e "Hypervisor $HYPERVISOR is not supported\nsupported options: qemu, virtualbox, auto"
+      if ! [[ "$HYPERVISOR" =~ ^(QEMU|VirtualBox)$ ]]; then
+        echo -e "Hypervisor $HYPERVISOR is not supported\nsupported options: QEMU, VirtualBox, auto"
         break 1
       fi
       shift # past argument
