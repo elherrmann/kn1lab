@@ -1,10 +1,54 @@
 #!/bin/bash
 
+
+# Set yout SSH Key here 
 SSH_PUB_KEY=""
+HYPERVISOR=""
+
+HELP_STRING="
+Usage:\n
+\t./[filename].sh [OPTION]...\n
+\n
+Options:\n
+\t-s|--ssh-pub-key [PATH]\t\tset path to ssh PUBLIC key\n
+\t-v|--set-hypervisor [STRING]\tset hypervisor. Default is auto\n
+\t\t\t\t\tsupported options: qemu, virtualbox, auto\n
+\t-h|--help\t\t\tdisplay this help and exit\n"
+
+# Handling Args
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -k|--ssh-pub-key)
+      SSH_PUB_KEY="$2"
+      shift # past argument
+      shift # past value
+      ;;
+    -v|--set-hypervisor)
+      HYPERVISOR="$2"
+      if ! [[ "$HYPERVISOR" =~ ^(qemu|virtualbox)$ ]]; then
+        echo -e "Hypervisor $HYPERVISOR is not supported\nsupported options: qemu, virtualbox, auto"
+        break 1
+      fi
+      shift # past argument
+      shift # past value
+      ;;
+    -h|--help)
+      echo -e $HELP_STRING
+      exit 1
+      ;;
+    -*|--*)
+      echo "Unknown option $1"
+      exit 1
+      ;;
+  esac
+done
+
+# Check SSH Key
 if [ -z "$SSH_PUB_KEY" ]; then
         echo "Please set variable \$SSH_PUB_KEY to your ssh public key."
         exit -1
 fi
+
 
 # Get the directory where the script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,23 +79,44 @@ UBUNTU_VERSION="ubuntu-22.04-cloud"
 # Check architecture
 ARCH="$(uname -m)"
 
-# Set the appropriate Ubuntu image based on architecture
-if [[ "$ARCH" == "x86_64" ]]; then
+# Legacy Hypervisor detection
+#if [[ "$HYPERVISOR" == "auto" ]] || [[ -z "$HYPERVISOR" ]]; then
+if [[ "$HYPERVISOR" =~ ^(auto|)$ ]]; then
+    if [[ $ARCH == "x86_64" ]]; then
+        HYPERVISOR="VirtualBox"
+    elif [[ $ARCH == "ARM" ]]; then
+        HYPERVISOR="QEMU"
+    else
+        echo "Could not auto detect hypervisor"
+        exit 1
+    fi
+fi
+
+# Set the appropriate Ubuntu image based on type of hypervisor and architecture
+if [[ "$HYPERVISOR" == "VirtualBox" ]] && [[ $ARCH == "x86_64" ]]; then
     # Intel (amd64 architecture)
     CLOUD_IMG_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.ova"
     VM_TYPE="VirtualBox"
     FILE_ENDING=".ova"
-elif [[ "$ARCH" == "arm64" ]]; then
-    # ARM-based (ARM64 architecture)
+elif [[ "$HYPERVISOR" == "QEMU" ]]; then
     if [ -f pidfile.txt ]; then
         echo "VM is already running, exiting..."
         exit 0
     fi
-    CLOUD_IMG_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-arm64.img"
+    if [[ $ARCH == "ARM" ]]; then
+        # ARM-based (ARM64 architecture)
+        CLOUD_IMG_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-arm64.img"
+    elif [[ $ARCH == "x86_64" ]]; then
+        # Intel (amd64 architecture)
+        CLOUD_IMG_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64-disk-kvm.img"
+    else
+        echo "Unsupported architecture: $ARCH"
+    fi
     VM_TYPE="QEMU"
     FILE_ENDING=".img"
 else
-    echo "Unsupported architecture: $ARCH"
+    echo "Unsupported architecture hypervisor combination: $ARCH + $HYPERVISOR"
+    echo "check help page for futher information"
     exit 1
 fi
 
@@ -143,7 +208,8 @@ create_virtualbox_vm() {
     VBoxManage startvm "$VM_NAME" --type headless
 }
 
-# Function to create a VM using QEMU (for ARM-based systems)
+
+# Function to create a VM using QEMU (for ARM-based and x86_64 systems)
 create_qemu_vm() {
     echo "Setting up VM using QEMU (ARM-based system)..."
 
@@ -169,25 +235,44 @@ create_qemu_vm() {
         qemu-img resize $UBUNTU_VERSION$FILE_ENDING "$DISC_SIZE"M
     fi
 
-    # Run the VM using QEMU with ARM architecture
-    qemu-system-aarch64 \
-        -m "$MEMORY_SIZE"M \
-        -accel hvf \
-        -cpu host \
-        -smp $CPU_COUNT \
-        -M virt \
-        --display none -daemonize -pidfile pidfile.txt \
-        -bios QEMU_EFI.fd \
- 	    -device virtio-net-pci,netdev=net0 \
-        -netdev user,id=net0,hostfwd=tcp::"$SSH_HOST_PORT"-:"$SSH_GUEST_PORT" \
-        -hda $CLOUD_IMG_PATH \
-        -cdrom $CLOUD_INIT_ISO_PATH
+
+    if [ $ARCH == "x86_64" ]; then
+        # Run the VM using QEMU with x86_64 architecture
+        qemu-system-aarch64 \
+            -m "$MEMORY_SIZE"M \
+            -accel hvf \
+            -cpu host \
+            -smp $CPU_COUNT \
+            -M virt \
+            --display none -daemonize -pidfile pidfile.txt \
+            -bios QEMU_EFI.fd \
+     	    -device virtio-net-pci,netdev=net0 \
+            -netdev user,id=net0,hostfwd=tcp::"$SSH_HOST_PORT"-:"$SSH_GUEST_PORT" \
+            -hda $CLOUD_IMG_PATH \
+            -cdrom $CLOUD_INIT_ISO_PATH
+
+    elif [ $ARCH == "ARM" ]; then
+        # Run the VM using QEMU with ARM architecture
+        qemu-system-aarch64 \
+            -m "$MEMORY_SIZE"M \
+            -accel hvf \
+            -cpu host \
+            -smp $CPU_COUNT \
+            -M virt \
+            --display none -daemonize -pidfile pidfile.txt \
+            -bios QEMU_EFI.fd \
+     	    -device virtio-net-pci,netdev=net0 \
+            -netdev user,id=net0,hostfwd=tcp::"$SSH_HOST_PORT"-:"$SSH_GUEST_PORT" \
+            -hda $CLOUD_IMG_PATH \
+            -cdrom $CLOUD_INIT_ISO_PATH
+    fi
 }
 
+    
 # Main logic to determine the VM setup based on architecture and OS
-if [[ "$VM_TYPE" == "VirtualBox" ]]; then
+if [[ "$HYPERVISOR" == "VirtualBox" ]]; then
     create_virtualbox_vm
-elif [[ "$VM_TYPE" == "QEMU" ]]; then
+elif [[ "$HYPERVISOR" == "QEMU" ]]; then
     create_qemu_vm
 fi
 
@@ -204,11 +289,6 @@ fi
 
 echo "VM created and started."
 echo "You can SSH into the VM using: ssh -p $SSH_HOST_PORT labrat@localhost"
-
-
-
-
-
 
 
 
